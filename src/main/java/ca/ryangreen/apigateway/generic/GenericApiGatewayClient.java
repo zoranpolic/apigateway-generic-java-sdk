@@ -1,16 +1,9 @@
 package ca.ryangreen.apigateway.generic;
 
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.AmazonWebServiceClient;
-import com.amazonaws.ClientConfiguration;
-import com.amazonaws.DefaultRequest;
+import com.amazonaws.*;
 import com.amazonaws.auth.AWS4Signer;
 import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.http.AmazonHttpClient;
-import com.amazonaws.http.ExecutionContext;
-import com.amazonaws.http.HttpMethodName;
-import com.amazonaws.http.HttpResponseHandler;
-import com.amazonaws.http.JsonResponseHandler;
+import com.amazonaws.http.*;
 import com.amazonaws.internal.auth.DefaultSignerProvider;
 import com.amazonaws.protocol.json.JsonOperationMetadata;
 import com.amazonaws.protocol.json.SdkStructuredPlainJsonFactory;
@@ -21,6 +14,7 @@ import com.amazonaws.transform.Unmarshaller;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.io.InputStream;
+import java.net.URI;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -33,14 +27,14 @@ public class GenericApiGatewayClient extends AmazonWebServiceClient {
     private final JsonResponseHandler<GenericApiGatewayResponse> responseHandler;
     private final HttpResponseHandler<AmazonServiceException> errorResponseHandler;
     private final AWSCredentialsProvider credentials;
-    private String apiKey;
+    private final String apiKey;
     private final AWS4Signer signer;
+    private final String endPoint;
 
     GenericApiGatewayClient(ClientConfiguration clientConfiguration, String endpoint, Region region,
                             AWSCredentialsProvider credentials, String apiKey, AmazonHttpClient httpClient) {
         super(clientConfiguration);
-        setRegion(region);
-        setEndpoint(endpoint);
+        this.endPoint = endpoint;
         this.credentials = credentials;
         this.apiKey = apiKey;
         this.signer = new AWS4Signer();
@@ -52,7 +46,7 @@ public class GenericApiGatewayClient extends AmazonWebServiceClient {
         this.responseHandler = SdkStructuredPlainJsonFactory.SDK_JSON_FACTORY.createResponseHandler(metadata, responseUnmarshaller);
         JsonErrorUnmarshaller defaultErrorUnmarshaller = new JsonErrorUnmarshaller(GenericApiGatewayException.class, null) {
             @Override
-            public AmazonServiceException unmarshall(JsonNode jsonContent) throws Exception {
+            public AmazonServiceException unmarshall(JsonNode jsonContent) {
                 return new GenericApiGatewayException(jsonContent.toString());
             }
         };
@@ -64,30 +58,34 @@ public class GenericApiGatewayClient extends AmazonWebServiceClient {
         }
     }
 
-    public GenericApiGatewayResponse execute(GenericApiGatewayRequest request) {
+    public AmazonWebServiceResponse<GenericApiGatewayResponse> execute(GenericApiGatewayRequest request) {
         return execute(request.getHttpMethod(), request.getResourcePath(), request.getHeaders(), request.getParameters(), request.getBody());
     }
 
-    private GenericApiGatewayResponse execute(HttpMethodName method, String resourcePath, Map<String, String> headers, Map<String,List<String>> parameters, InputStream content) {
+    private AmazonWebServiceResponse<GenericApiGatewayResponse> execute(HttpMethodName method, String resourcePath, Map<String, String> headers, Map<String,List<String>> parameters, InputStream content) {
         final ExecutionContext executionContext = buildExecutionContext();
 
         DefaultRequest request = new DefaultRequest(API_GATEWAY_SERVICE_NAME);
         request.setHttpMethod(method);
         request.setContent(content);
-        request.setEndpoint(this.endpoint);
+        request.setEndpoint(URI.create(this.endPoint));
         request.setResourcePath(resourcePath);
         request.setHeaders(buildRequestHeaders(headers, apiKey));
         if (parameters != null) {
             request.setParameters(parameters);
         }
-        return this.client.execute(request, responseHandler, errorResponseHandler, executionContext).getAwsResponse();
+        return this.client.requestExecutionBuilder()
+                .request(request)
+                .executionContext(executionContext)
+                .errorResponseHandler(errorResponseHandler)
+                .execute(responseHandler).getAwsResponse();
+
     }
 
     private ExecutionContext buildExecutionContext() {
         final ExecutionContext executionContext = ExecutionContext.builder().withSignerProvider(
                 new DefaultSignerProvider(this, signer)).build();
         executionContext.setCredentialsProvider(credentials);
-        executionContext.setSigner(signer);
         return executionContext;
     }
 
@@ -110,5 +108,4 @@ public class GenericApiGatewayClient extends AmazonWebServiceClient {
         return API_GATEWAY_SERVICE_NAME;
     }
 }
-
 

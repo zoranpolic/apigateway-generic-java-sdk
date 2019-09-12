@@ -1,5 +1,6 @@
 package ca.ryangreen.apigateway.generic;
 
+import com.amazonaws.AmazonWebServiceResponse;
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.auth.AWSStaticCredentialsProvider;
@@ -9,8 +10,9 @@ import com.amazonaws.http.HttpMethodName;
 import com.amazonaws.http.apache.client.impl.SdkHttpClient;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.Regions;
-import java.util.Arrays;
-import java.util.List;
+
+import java.util.*;
+
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpVersion;
 import org.apache.http.client.methods.HttpUriRequest;
@@ -25,8 +27,6 @@ import org.mockito.Mockito;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.any;
@@ -44,8 +44,7 @@ public class GenericApiGatewayClientTest {
         HttpResponse resp = new BasicHttpResponse(new BasicStatusLine(HttpVersion.HTTP_1_1, 200, "OK"));
         BasicHttpEntity entity = new BasicHttpEntity();
         entity.setContent(new ByteArrayInputStream("test payload".getBytes()));
-        resp.setEntity(entity);
-        Mockito.doReturn(resp).when(mockClient).execute(any(HttpUriRequest.class), any(HttpContext.class));
+        runMockito(resp,entity);
 
         ClientConfiguration clientConfig = new ClientConfiguration();
 
@@ -59,20 +58,17 @@ public class GenericApiGatewayClientTest {
                 .build();
     }
 
-    @Test
-    public void testExecute_happy() throws IOException {
-        Map<String, String> headers = new HashMap<>();
-        headers.put("Account-Id", "fubar");
-        headers.put("Content-Type", "application/json");
-        GenericApiGatewayResponse response = client.execute(
-                new GenericApiGatewayRequestBuilder()
-                        .withBody(new ByteArrayInputStream("test request".getBytes()))
-                        .withHttpMethod(HttpMethodName.POST)
-                        .withHeaders(headers)
-                        .withResourcePath("/test/orders").build());
+    private void runMockito(HttpResponse resp, BasicHttpEntity entity) throws IOException {
+        resp.setEntity(entity);
+        Mockito.doReturn(resp).when(mockClient).execute(any(HttpUriRequest.class), any(HttpContext.class));
+    }
 
-        assertEquals("Wrong response body", "test payload", response.getBody());
-        assertEquals("Wrong response status", 200, response.getHttpResponse().getStatusCode());
+    @Test
+    public void testExecuteHappy() throws IOException {
+        Map<String, String> headers = getHeaders();
+        AmazonWebServiceResponse<GenericApiGatewayResponse> response = getResponse(headers);
+
+        runResponseChecks(response);
 
         Mockito.verify(mockClient, times(1)).execute(argThat(new LambdaMatcher<>(
                         x -> (x.getMethod().equals("POST")
@@ -83,35 +79,56 @@ public class GenericApiGatewayClientTest {
                 any(HttpContext.class));
     }
 
-    @Test
-    public void testExecute_happy_parameters() throws IOException {
+    private Map<String, String> getHeaders() {
         Map<String, String> headers = new HashMap<>();
         headers.put("Account-Id", "fubar");
         headers.put("Content-Type", "application/json");
-        Map<String,List<String>> parameters = new HashMap<>();
-        parameters.put("MyParam", Arrays.asList("MyParamValue"));
-        GenericApiGatewayResponse response = client.execute(
-            new GenericApiGatewayRequestBuilder()
-                .withBody(new ByteArrayInputStream("test request".getBytes()))
-                .withHttpMethod(HttpMethodName.POST)
-                .withHeaders(headers)
-                .withParameters(parameters)
-                .withResourcePath("/test/orders").build());
+        return headers;
+    }
 
-        assertEquals("Wrong response body", "test payload", response.getBody());
-        assertEquals("Wrong response status", 200, response.getHttpResponse().getStatusCode());
+    private void runResponseChecks(AmazonWebServiceResponse<GenericApiGatewayResponse> response) {
+        assertEquals("Wrong response body", "test payload", response.getResult().getBody());
+        assertEquals("Wrong response status", 200, response.getResult().getHttpResponse().getStatusCode());
+    }
 
-        Mockito.verify(mockClient, times(1)).execute(argThat(new LambdaMatcher<>(
-                                                         x -> (x.getMethod().equals("POST")
-                                                             && x.getFirstHeader("Account-Id").getValue().equals("fubar")
-                                                             && x.getFirstHeader("x-api-key").getValue().equals("12345")
-                                                             && x.getFirstHeader("Authorization").getValue().startsWith("AWS4")
-                                                             && x.getURI().toString().equals("https://foobar.execute-api.us-east-1.amazonaws.com/test/orders?MyParam=MyParamValue")))),
-                                                     any(HttpContext.class));
+    private AmazonWebServiceResponse<GenericApiGatewayResponse> getResponse(Map<String, String> headers) {
+        return client.execute(
+                getRequestBuilder(headers).build());
     }
 
     @Test
-    public void testExecute_noApiKey_noCreds() throws IOException {
+    public void testExecuteHappyParameters() throws IOException {
+        Map<String, String> headers = getHeaders();
+        Map<String,List<String>> parameters = new HashMap<>();
+        parameters.put("MyParam", Collections.singletonList("MyParamValue"));
+        AmazonWebServiceResponse<GenericApiGatewayResponse> response = client.execute(
+                getRequestBuilder(headers).withParameters(parameters).build());
+
+        runResponseChecks(response);
+
+        Mockito.verify(mockClient, times(1)).execute(argThat(new LambdaMatcher<>(
+                        x -> (x.getMethod().equals("POST")
+                                && x.getFirstHeader("Account-Id").getValue().equals("fubar")
+                                && x.getFirstHeader("x-api-key").getValue().equals("12345")
+                                && x.getFirstHeader("Authorization").getValue().startsWith("AWS4")
+                                && x.getURI().toString().equals("https://foobar.execute-api.us-east-1.amazonaws.com/test/orders?MyParam=MyParamValue")))),
+                any(HttpContext.class));
+    }
+
+    private GenericApiGatewayRequestBuilder getRequestBuilder(Map<String, String> headers) {
+        return getBaseRequestBuilder()
+                .withHeaders(headers);
+    }
+
+    private GenericApiGatewayRequestBuilder getBaseRequestBuilder() {
+        return new GenericApiGatewayRequestBuilder()
+                .withBody(new ByteArrayInputStream("test request".getBytes()))
+                .withHttpMethod(HttpMethodName.POST)
+                .withResourcePath("/test/orders");
+    }
+
+    @Test
+    public void testExecuteNoApiKeyNoCreds() throws IOException {
         client = new GenericApiGatewayClientBuilder()
                 .withEndpoint("https://foobar.execute-api.us-east-1.amazonaws.com")
                 .withRegion(Region.getRegion(Regions.fromName("us-east-1")))
@@ -119,14 +136,10 @@ public class GenericApiGatewayClientTest {
                 .withHttpClient(new AmazonHttpClient(new ClientConfiguration(), mockClient, null))
                 .build();
 
-        GenericApiGatewayResponse response = client.execute(
-                new GenericApiGatewayRequestBuilder()
-                        .withBody(new ByteArrayInputStream("test request".getBytes()))
-                        .withHttpMethod(HttpMethodName.POST)
-                        .withResourcePath("/test/orders").build());
+        AmazonWebServiceResponse<GenericApiGatewayResponse> response = client.execute(
+                getBaseRequestBuilder().build());
 
-        assertEquals("Wrong response body", "test payload", response.getBody());
-        assertEquals("Wrong response status", 200, response.getHttpResponse().getStatusCode());
+        runResponseChecks(response);
 
         Mockito.verify(mockClient, times(1)).execute(argThat(new LambdaMatcher<>(
                         x -> (x.getMethod().equals("POST")
@@ -137,25 +150,16 @@ public class GenericApiGatewayClientTest {
     }
 
     @Test
-    public void testExecute_non2xx_exception() throws IOException {
+    public void testExecuteNon2XxException() throws IOException {
         HttpResponse resp = new BasicHttpResponse(new BasicStatusLine(HttpVersion.HTTP_1_1, 404, "Not found"));
         BasicHttpEntity entity = new BasicHttpEntity();
         entity.setContent(new ByteArrayInputStream("{\"message\" : \"error payload\"}".getBytes()));
-        resp.setEntity(entity);
-        Mockito.doReturn(resp).when(mockClient).execute(any(HttpUriRequest.class), any(HttpContext.class));
+        runMockito(resp,entity);
 
-        Map<String, String> headers = new HashMap<>();
-        headers.put("Account-Id", "fubar");
-        headers.put("Content-Type", "application/json");
+        Map<String, String> headers = getHeaders();
 
         try {
-            client.execute(
-                    new GenericApiGatewayRequestBuilder()
-                            .withBody(new ByteArrayInputStream("test request".getBytes()))
-                            .withHttpMethod(HttpMethodName.POST)
-                            .withHeaders(headers)
-                            .withResourcePath("/test/orders").build());
-
+            getResponse(headers);
             Assert.fail("Expected exception");
         } catch (GenericApiGatewayException e) {
             assertEquals("Wrong status code", 404, e.getStatusCode());
